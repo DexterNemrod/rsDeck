@@ -25,6 +25,7 @@
 #define OP_STATUS_6X                0xC0
 #define OP_TX_PARAMS_6X             0x8E
 #define OP_PACKET_TYPE_6X           0x8A
+#define OP_GET_PACKET_TYPE_6X       0x11
 #define OP_BUFFER_BASE_ADDR_6X      0x8F
 #define OP_READ_REGISTER_6X         0x1D
 #define OP_WRITE_REGISTER_6X        0x0D

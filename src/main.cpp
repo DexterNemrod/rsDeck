@@ -395,6 +395,14 @@ void onHotkeyDiag() {
             devErr, status, (status >> 4) & 0x07, (status >> 1) & 0x07);
         if (devErr & 0x40) Serial.println("  *** PLL LOCK FAILED ***");
         Serial.printf("Current RSSI: %d dBm\n", radio.currentRssi());
+        uint8_t packetType = radio.getPacketType();
+        const char* packetTypeName =
+            (packetType == 0x00) ? "GFSK" :
+            (packetType == 0x01) ? "LoRa" :
+            (packetType == 0x02) ? "LR-FHSS" : "unknown";
+        Serial.printf("Packet type: 0x%02X (%s)%s\n",
+                      packetType, packetTypeName,
+                      packetType == 0x01 ? "" : " *** NOT LoRa ***");
     }
     Serial.printf("Free heap: %lu bytes  PSRAM: %lu bytes\n",
                   (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram());

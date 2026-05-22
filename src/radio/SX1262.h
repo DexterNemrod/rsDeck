@@ -60,6 +60,7 @@ public:
     uint16_t getDeviceErrors();
     void clearDeviceErrors();
     uint8_t getStatus();
+    uint8_t getPacketType();
     uint16_t getIrqFlags();
     float getAirtime(uint16_t written);
 
@@ -91,10 +92,11 @@ private:
     void writeBuffer(const uint8_t* buffer, size_t size);
     void waitOnBusy();
 
-    void loraMode();
+    bool loraMode();
+    bool ensureLoRaMode(const char* context);
     void rxAntEnable();
     void calibrate();
-    void calibrate_image(uint32_t frequency);
+    bool calibrate_image(uint32_t frequency);
     void enableTCXO();
     void setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr, int ldro);
     void setPacketParams(uint32_t preamble, uint8_t headermode, uint8_t length, uint8_t crc);
@@ -131,6 +133,7 @@ private:
     bool _radioOnline = false;
     bool _tcxo = false;
     bool _dio2_as_rf_switch = false;
+    uint8_t _imageCalBand = 0xFF;
     bool _txActive = false;
     uint32_t _txStartMs = 0;
     uint32_t _txTimeoutMs = 0;

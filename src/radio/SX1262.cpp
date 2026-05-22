@@ -8,6 +8,28 @@
 
 SX1262* SX1262::_instance = nullptr;
 
+namespace {
+constexpr uint8_t IMAGE_CAL_UNSUPPORTED = 0xFF;
+
+uint8_t imageCalParams(uint32_t frequency, uint8_t out[2]) {
+    if      (frequency >= 430000000UL && frequency <= 440000000UL) { out[0] = 0x6B; out[1] = 0x6F; return 0; }
+    else if (frequency >= 470000000UL && frequency <= 510000000UL) { out[0] = 0x75; out[1] = 0x81; return 1; }
+    else if (frequency >= 779000000UL && frequency <= 787000000UL) { out[0] = 0xC1; out[1] = 0xC5; return 2; }
+    else if (frequency >= 863000000UL && frequency <= 870000000UL) { out[0] = 0xD7; out[1] = 0xDB; return 3; }
+    else if (frequency >= 902000000UL && frequency <= 928000000UL) { out[0] = 0xE1; out[1] = 0xE9; return 4; }
+    return IMAGE_CAL_UNSUPPORTED;
+}
+
+const char* packetTypeName(uint8_t packetType) {
+    switch (packetType) {
+        case 0x00: return "GFSK";
+        case 0x01: return "LoRa";
+        case 0x02: return "LR-FHSS";
+        default: return "unknown";
+    }
+}
+}
+
 SX1262::SX1262(SPIClass* spi, int ss, int sclk, int mosi, int miso,
                int reset, int irq, int busy, int rxen,
                bool tcxo, bool dio2_as_rf_switch)
@@ -171,15 +193,25 @@ void SX1262::calibrate() {
     waitOnBusy();
 }
 
-void SX1262::calibrate_image(uint32_t frequency) {
+bool SX1262::calibrate_image(uint32_t frequency) {
     uint8_t image_freq[2] = {0};
-    if      (frequency >= 430E6 && frequency <= 440E6) { image_freq[0] = 0x6B; image_freq[1] = 0x6F; }
-    else if (frequency >= 470E6 && frequency <= 510E6) { image_freq[0] = 0x75; image_freq[1] = 0x81; }
-    else if (frequency >= 779E6 && frequency <= 787E6) { image_freq[0] = 0xC1; image_freq[1] = 0xC5; }
-    else if (frequency >= 863E6 && frequency <= 870E6) { image_freq[0] = 0xD7; image_freq[1] = 0xDB; }
-    else if (frequency >= 902E6 && frequency <= 928E6) { image_freq[0] = 0xE1; image_freq[1] = 0xE9; }
+    uint8_t band = imageCalParams(frequency, image_freq);
+
+    if (band == IMAGE_CAL_UNSUPPORTED) {
+        Serial.printf("[SX1262] No image calibration table for %lu Hz\n",
+                      (unsigned long)frequency);
+        return false;
+    }
+
+    if (_imageCalBand == band) return true;
+
+    standby();
     executeOpcode(OP_CALIBRATE_IMAGE_6X, image_freq, 2);
     waitOnBusy();
+    _imageCalBand = band;
+    Serial.printf("[SX1262] Image calibrated for %lu Hz (0x%02X 0x%02X)\n",
+                  (unsigned long)frequency, image_freq[0], image_freq[1]);
+    return true;
 }
 
 void SX1262::enableTCXO() {
@@ -192,9 +224,36 @@ void SX1262::enableTCXO() {
     }
 }
 
-void SX1262::loraMode() {
+bool SX1262::loraMode() {
     uint8_t mode = MODE_LONG_RANGE_MODE_6X;
-    executeOpcode(OP_PACKET_TYPE_6X, &mode, 1);
+    for (int attempt = 0; attempt < 5; attempt++) {
+        executeOpcode(OP_PACKET_TYPE_6X, &mode, 1);
+        delay(2);
+
+        uint8_t packetType = getPacketType();
+        if (packetType == MODE_LONG_RANGE_MODE_6X) {
+            if (attempt > 0) {
+                Serial.printf("[SX1262] LoRa packet type set after %d attempts\n", attempt + 1);
+            }
+            return true;
+        }
+
+        Serial.printf("[SX1262] SetPacketType LoRa attempt %d/5 read back 0x%02X (%s)\n",
+                      attempt + 1, packetType, packetTypeName(packetType));
+    }
+
+    Serial.println("[SX1262] Failed to enter LoRa packet mode");
+    return false;
+}
+
+bool SX1262::ensureLoRaMode(const char* context) {
+    uint8_t packetType = getPacketType();
+    if (packetType == MODE_LONG_RANGE_MODE_6X) return true;
+
+    Serial.printf("[SX1262] %s found packet_type=0x%02X (%s), reasserting LoRa\n",
+                  context ? context : "config", packetType, packetTypeName(packetType));
+    standby();
+    return loraMode();
 }
 
 void SX1262::rxAntEnable() {
@@ -206,6 +265,7 @@ void SX1262::rxAntEnable() {
 bool SX1262::begin(uint32_t frequency) {
     _frequency = frequency;
     reset();
+    _imageCalBand = IMAGE_CAL_UNSUPPORTED;
     if (_busy != -1) { pinMode(_busy, INPUT); }
     if (!_preinitDone) {
         if (!preInit()) {
@@ -234,7 +294,9 @@ bool SX1262::begin(uint32_t frequency) {
     calibrate_image(_frequency);
 
     // Set LoRa packet type and return to STDBY_XOSC
-    loraMode();
+    if (!loraMode()) {
+        return false;
+    }
     standby();
 
     // Post-calibration diagnostic
@@ -287,6 +349,8 @@ void SX1262::end() {
 
 int SX1262::beginPacket(int implicitHeader) {
     standby();
+    if (!ensureLoRaMode("beginPacket")) return 0;
+
     if (implicitHeader) { implicitHeaderMode(); } else { explicitHeaderMode(); }
     _payloadLength = 0;
     _fifo_tx_addr_ptr = 0;
@@ -295,6 +359,7 @@ int SX1262::beginPacket(int implicitHeader) {
 }
 
 int SX1262::endPacket(bool async) {
+    if (!ensureLoRaMode("endPacket")) return 0;
     setPacketParams(_preambleLength, _implicitHeaderMode, _payloadLength, _crcMode);
 
     uint8_t timeout[3] = {0};
@@ -378,6 +443,8 @@ size_t SX1262::write(const uint8_t* buffer, size_t size) {
 }
 
 void SX1262::receive(int size) {
+    if (!ensureLoRaMode("receive")) return;
+
     uint8_t clear[2] = {0xFF, 0xFF};
     executeOpcode(OP_CLEAR_IRQ_STATUS_6X, clear, 2);
 
@@ -521,6 +588,12 @@ uint8_t SX1262::getStatus() {
     return buf[0];
 }
 
+uint8_t SX1262::getPacketType() {
+    uint8_t buf[1] = {0xFF};
+    executeOpcodeRead(OP_GET_PACKET_TYPE_6X, buf, 1);
+    return buf[0];
+}
+
 uint16_t SX1262::getIrqFlags() {
     uint8_t buf[2] = {0};
     executeOpcodeRead(OP_GET_IRQ_STATUS_6X, buf, 2);
@@ -535,6 +608,8 @@ bool IRAM_ATTR SX1262::getPacketValidity() {
 }
 
 void SX1262::setFrequency(uint32_t frequency) {
+    calibrate_image(frequency);
+    standby();
     _frequency = frequency;
     uint32_t freq = (uint32_t)((double)frequency / (double)FREQ_STEP_6X);
     uint8_t buf[4];
@@ -628,11 +703,15 @@ void SX1262::setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr, int ldro) {
     // SetModulationParams is only valid in STDBY mode (SX1262 DS Table 11-2).
     // Calling from RX/TX mode is silently rejected by the hardware.
     standby();
+    if (!ensureLoRaMode("setModulationParams")) return;
+
     uint8_t buf[4] = {sf, bw, cr, (uint8_t)ldro};
     executeOpcode(OP_MODULATION_PARAMS_6X, buf, 4);
 }
 
 void SX1262::setPacketParams(uint32_t preamble, uint8_t headermode, uint8_t length, uint8_t crc) {
+    if (!ensureLoRaMode("setPacketParams")) return;
+
     uint8_t buf[6];
     buf[0] = (uint8_t)((preamble & 0xFF00) >> 8);
     buf[1] = (uint8_t)(preamble & 0x00FF);
