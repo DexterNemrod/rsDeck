@@ -26,8 +26,8 @@ jobs:
 
       - name: Merge single .bin for M5Burner
         run: |
-          esptool.py --chip esp32s3 merge_bin \
-            --flash_mode qio --flash_size 16MB \
+          esptool.py --chip esp32s3 merge-bin \
+            --flash-mode qio --flash-size 16MB \
             -o ratdeck-merged.bin \
             0x0000 .pio/build/ratdeck_915/bootloader.bin \
             0x8000 .pio/build/ratdeck_915/partitions.bin \
@@ -87,8 +87,8 @@ jobs:
 
       - name: Merge single .bin for M5Burner
         run: |
-          esptool.py --chip esp32s3 merge_bin \
-            --flash_mode qio --flash_size 16MB \
+          esptool.py --chip esp32s3 merge-bin \
+            --flash-mode qio --flash-size 16MB \
             -o ratdeck-merged.bin \
             0x0000 .pio/build/ratdeck_915/bootloader.bin \
             0x8000 .pio/build/ratdeck_915/partitions.bin \
