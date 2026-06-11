@@ -91,7 +91,6 @@ public:
   size_t print(const char *value);
   void flush();
   void onConnect(BLEServer *server);
-  void onConnect(BLEServer *server, esp_ble_gatts_cb_param_t *param);
   void onDisconnect(BLEServer *server);
 
   uint32_t onPassKeyRequest();
