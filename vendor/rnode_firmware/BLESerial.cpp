@@ -34,6 +34,15 @@ void BLESerial::onPassKeyNotify(uint32_t passkey) { bt_passkey_notify_callback(p
 bool BLESerial::onSecurityRequest() { return bt_security_request_callback(); }
 void BLESerial::onAuthenticationComplete(esp_ble_auth_cmpl_t auth_result) { bt_authentication_complete_callback(auth_result); }
 void BLESerial::onConnect(BLEServer *server) { bt_connect_callback(server); }
+
+void BLESerial::onConnect(BLEServer *server, esp_ble_gatts_cb_param_t *param) {
+  // Request link encryption immediately so bonding completes before the
+  // host app touches the encrypted serial characteristics. Without this,
+  // the first connect from an unbonded host fails mid-operation while the
+  // OS pairing dialog runs, and only a second attempt succeeds.
+  esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT_MITM);
+}
+
 void BLESerial::onDisconnect(BLEServer *server) { bt_disconnect_callback(server); ble_server->startAdvertising(); }
 bool BLESerial::onConfirmPIN(uint32_t pin) { return bt_confirm_pin_callback(pin); };
 bool BLESerial::connected() { return ble_server->getConnectedCount() > 0; }

@@ -439,16 +439,22 @@ void td_draw_idle_content() {
   td_canvas->print(abuf);
   y += 16;
 
-  signed char t_snr = (signed char)last_snr_raw;
-  float snr = ((int)t_snr) * 0.25f;
+  // last_rssi is -292 (sentinel) until a packet has actually been received
   char sigbuf[32];
-  snprintf(sigbuf, sizeof(sigbuf), "RSSI %d   SNR %.1f", last_rssi, snr);
+  float rssi_pct = 0.0f;
+  if (radio_online && last_rssi > -200) {
+    signed char t_snr = (signed char)last_snr_raw;
+    float snr = ((int)t_snr) * 0.25f;
+    snprintf(sigbuf, sizeof(sigbuf), "RSSI %d   SNR %.1f", last_rssi, snr);
+    rssi_pct = ((float)(last_rssi - S_RSSI_MIN) / S_RSSI_SPAN) * 100.0f;
+  } else {
+    snprintf(sigbuf, sizeof(sigbuf), "RSSI --   SNR --");
+  }
   td_canvas->setTextColor(TD_CLR_TEXT_PRIMARY);
   td_canvas->setCursor(x, y);
   td_canvas->print(sigbuf);
   y += 12;
 
-  float rssi_pct = ((float)(last_rssi - S_RSSI_MIN) / S_RSSI_SPAN) * 100.0f;
   td_draw_gradient_bar(x, y, TD_LEFT_W - 16, 10, rssi_pct);
 }
 
@@ -477,11 +483,6 @@ void td_draw_pairing_screen() {
     }
     y += 58;
   }
-
-  td_canvas->setTextSize(1);
-  td_canvas->setTextColor(TD_CLR_TEXT_SECONDARY);
-  td_canvas->setCursor(x, y);
-  td_canvas->print("Confirm this code on the connecting device.");
 }
 
 void td_draw_error_screen() {
