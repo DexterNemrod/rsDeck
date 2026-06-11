@@ -1,6 +1,7 @@
 // rsDeck boot launcher — picks Standalone or RNode at power-on.
 // Runs from ota_0; writes the choice to otadata and restarts. Both target
 // firmwares re-arm this launcher on boot, so any reset returns here.
+// Input reuses the standalone HAL (Trackball, TouchInput) via shim includes.
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -8,25 +9,11 @@
 #include <LovyanGFX.hpp>
 
 #include "RsDeckModeSwitch.h"
+#include "config/BoardConfig.h"
+#include "hal/Trackball.h"
+#include "hal/TouchInput.h"
 
 namespace {
-
-// Pins — keep in sync with src/config/BoardConfig.h
-constexpr int kPowerPin = 10;
-constexpr int kSpiSck = 40;
-constexpr int kSpiMiso = 38;
-constexpr int kSpiMosi = 41;
-constexpr int kTftCs = 12;
-constexpr int kTftDc = 11;
-constexpr int kTftBl = 42;
-constexpr int kLoraCs = 9;
-constexpr int kSdCs = 39;
-constexpr int kI2cSda = 18;
-constexpr int kI2cScl = 8;
-constexpr uint8_t kKbAddr = 0x55;
-constexpr int kTballUp = 3;
-constexpr int kTballDown = 2;
-constexpr int kTballClick = 0;
 
 constexpr uint16_t kBg = 0x0841;
 constexpr uint16_t kPanel = 0x1082;
@@ -37,6 +24,13 @@ constexpr uint16_t kWarn = 0xFBA0;
 constexpr uint32_t kAutoBootMs = 7000;
 constexpr char kPrefsNamespace[] = "rslaunch";
 constexpr char kLastChoiceKey[] = "last";
+
+// Option card geometry (shared by renderer and touch hit-testing)
+constexpr int16_t kCardX = 24;
+constexpr int16_t kCardW = 272;
+constexpr int16_t kCardH = 52;
+constexpr int16_t kCard1Y = 66;
+constexpr int16_t kCard2Y = 126;
 
 class LGFX_TDeckLauncher : public lgfx::LGFX_Device {
   lgfx::Panel_ST7789 _panel;
@@ -50,15 +44,16 @@ public:
     cfg_bus.spi_mode = 0;
     cfg_bus.freq_write = 27000000;
     cfg_bus.freq_read = 16000000;
-    cfg_bus.pin_sclk = kSpiSck;
-    cfg_bus.pin_miso = kSpiMiso;
-    cfg_bus.pin_mosi = kSpiMosi;
-    cfg_bus.pin_dc = kTftDc;
+    cfg_bus.pin_sclk = SPI_SCK;
+    cfg_bus.pin_miso = SPI_MISO;
+    cfg_bus.pin_mosi = SPI_MOSI;
+    cfg_bus.pin_dc = TFT_DC;
     _bus.config(cfg_bus);
     _panel.setBus(&_bus);
 
+    // Panel is natively 240x320 portrait; rotated to 320x240 in setup().
     auto cfg_panel = _panel.config();
-    cfg_panel.pin_cs = kTftCs;
+    cfg_panel.pin_cs = TFT_CS;
     cfg_panel.pin_rst = -1;
     cfg_panel.panel_width = 240;
     cfg_panel.panel_height = 320;
@@ -69,7 +64,7 @@ public:
     _panel.config(cfg_panel);
 
     auto cfg_light = _light.config();
-    cfg_light.pin_bl = kTftBl;
+    cfg_light.pin_bl = TFT_BL;
     cfg_light.invert = false;
     cfg_light.freq = 12000;
     cfg_light.pwm_channel = 0;
@@ -81,6 +76,8 @@ public:
 };
 
 LGFX_TDeckLauncher display;
+Trackball trackball;
+TouchInput touch;
 
 enum class Choice : uint8_t {
   Standalone = 0,
@@ -93,11 +90,11 @@ uint32_t lastRemain = UINT32_MAX;
 bool booting = false;
 bool autoBootEnabled = true;
 
-bool tballUpLast = true;
-bool tballDownLast = true;
-bool tballClickLast = true;
-uint32_t lastTballEdge = 0;
-uint32_t lastClickEdge = 0;
+int16_t scrollAccum = 0;
+uint32_t lastNavMove = 0;
+bool touchWasDown = false;
+int16_t touchLastX = 0;
+int16_t touchLastY = 0;
 
 uint8_t choiceValue(Choice choice) {
   return choice == Choice::RNode ? 1 : 0;
@@ -125,19 +122,19 @@ void saveLastChoice(Choice choice) {
   }
 }
 
-void drawOption(int y, const char *title, const char *subtitle, bool active) {
+void drawOption(int16_t y, const char *title, const char *subtitle, bool active) {
   uint16_t fill = active ? kAccent : kPanel;
   uint16_t fg = active ? TFT_BLACK : kText;
   uint16_t sub = active ? 0x2104 : kMuted;
 
-  display.fillRoundRect(24, y, 272, 52, 6, fill);
+  display.fillRoundRect(kCardX, y, kCardW, kCardH, 6, fill);
   display.setTextColor(fg, fill);
   display.setTextSize(2);
-  display.setCursor(40, y + 9);
+  display.setCursor(kCardX + 16, y + 9);
   display.print(title);
   display.setTextColor(sub, fill);
   display.setTextSize(1);
-  display.setCursor(40, y + 32);
+  display.setCursor(kCardX + 16, y + 32);
   display.print(subtitle);
 }
 
@@ -183,15 +180,15 @@ void drawScreen() {
   display.setCursor(26, 44);
   display.print("T-Deck Plus");
 
-  drawOption(66, "Standalone", "On-device messenger", selected == Choice::Standalone);
-  drawOption(126, "RNode", "BLE / USB radio", selected == Choice::RNode);
+  drawOption(kCard1Y, "Standalone", "On-device messenger", selected == Choice::Standalone);
+  drawOption(kCard2Y, "RNode", "BLE / USB radio", selected == Choice::RNode);
 
   display.setTextSize(1);
   display.setTextColor(kMuted, kBg);
   display.setCursor(24, 196);
-  display.print("Trackball: move + click    Keys: W/S, Enter");
+  display.print("Trackball or W/S select, click/Enter boot");
   display.setCursor(24, 212);
-  display.print("R = Standalone now    N = RNode now");
+  display.print("Touch: tap card, tap again to boot   R/N quick");
 
   drawCountdown(true);
 }
@@ -248,9 +245,11 @@ void startChoice(Choice choice) {
   using namespace rs_deck;
 
   FirmwareMode mode = choice == Choice::Standalone ? FirmwareMode::Standalone : FirmwareMode::RNode;
+  Serial.printf("[LAUNCHER] booting %s\n", mode_name(mode));
   showBooting(mode_name(mode), mode == FirmwareMode::RNode);
   SwitchResult result = set_next_boot(mode);
   if (!result.ok) {
+    Serial.printf("[LAUNCHER] boot switch failed: %s\n", result.message);
     showError(result.message);
     return;
   }
@@ -285,7 +284,7 @@ void handleKey(char key) {
 }
 
 char pollKeyboard() {
-  Wire.requestFrom(kKbAddr, (uint8_t)1);
+  Wire.requestFrom((uint8_t)KB_I2C_ADDR, (uint8_t)1);
   if (Wire.available()) {
     char key = (char)Wire.read();
     if (key != 0) {
@@ -296,54 +295,88 @@ char pollKeyboard() {
 }
 
 void pollTrackball() {
-  uint32_t now = millis();
+  trackball.update();
 
-  bool up = digitalRead(kTballUp);
-  bool down = digitalRead(kTballDown);
-  bool click = digitalRead(kTballClick);
-
-  if (!up && tballUpLast && now - lastTballEdge > 5) {
-    lastTballEdge = now;
-    pauseAutoBoot();
-    selectChoice(Choice::Standalone);
-  }
-  if (!down && tballDownLast && now - lastTballEdge > 5) {
-    lastTballEdge = now;
-    pauseAutoBoot();
-    selectChoice(Choice::RNode);
-  }
-  if (!click && tballClickLast && now - lastClickEdge > 50) {
-    lastClickEdge = now;
+  if (trackball.wasClicked()) {
     pauseAutoBoot();
     startChoice(selected);
+    return;
   }
 
-  tballUpLast = up;
-  tballDownLast = down;
-  tballClickLast = click;
+  int8_t dy = trackball.lastDeltaY();
+  if (dy != 0) {
+    pauseAutoBoot();
+    scrollAccum += dy;
+    // Two raw counts per selection step, rate-limited so a flick moves once.
+    uint32_t now = millis();
+    if (now - lastNavMove > 150) {
+      if (scrollAccum <= -2) {
+        lastNavMove = now;
+        scrollAccum = 0;
+        selectChoice(Choice::Standalone);
+      } else if (scrollAccum >= 2) {
+        lastNavMove = now;
+        scrollAccum = 0;
+        selectChoice(Choice::RNode);
+      }
+    }
+  }
+}
+
+void pollTouch() {
+  touch.update();
+
+  if (touch.isTouched()) {
+    touchWasDown = true;
+    touchLastX = touch.x();
+    touchLastY = touch.y();
+    return;
+  }
+
+  if (!touchWasDown) {
+    return;
+  }
+  touchWasDown = false;
+
+  // Tap on release: select a card, tap the selected card again to boot.
+  pauseAutoBoot();
+  if (touchLastX >= kCardX && touchLastX < kCardX + kCardW) {
+    if (touchLastY >= kCard1Y && touchLastY < kCard1Y + kCardH) {
+      if (selected == Choice::Standalone) {
+        startChoice(Choice::Standalone);
+      } else {
+        selectChoice(Choice::Standalone);
+      }
+    } else if (touchLastY >= kCard2Y && touchLastY < kCard2Y + kCardH) {
+      if (selected == Choice::RNode) {
+        startChoice(Choice::RNode);
+      } else {
+        selectChoice(Choice::RNode);
+      }
+    }
+  }
 }
 
 } // namespace
 
 void setup() {
   // Peripheral power must come up before anything touches the display or I2C.
-  pinMode(kPowerPin, OUTPUT);
-  digitalWrite(kPowerPin, HIGH);
+  pinMode(BOARD_POWER_PIN, OUTPUT);
+  digitalWrite(BOARD_POWER_PIN, HIGH);
   delay(50);
 
   // Park the other chip selects on the shared SPI bus.
-  pinMode(kLoraCs, OUTPUT);
-  digitalWrite(kLoraCs, HIGH);
-  pinMode(kSdCs, OUTPUT);
-  digitalWrite(kSdCs, HIGH);
+  pinMode(LORA_CS, OUTPUT);
+  digitalWrite(LORA_CS, HIGH);
+  pinMode(SD_CS, OUTPUT);
+  digitalWrite(SD_CS, HIGH);
 
   Serial.begin(115200);
 
-  Wire.begin(kI2cSda, kI2cScl, 400000);
+  Wire.begin(I2C_SDA, I2C_SCL, 400000);
 
-  pinMode(kTballUp, INPUT_PULLUP);
-  pinMode(kTballDown, INPUT_PULLUP);
-  pinMode(kTballClick, INPUT_PULLUP);
+  trackball.begin();
+  touch.begin();
 
   display.init();
   display.setRotation(1);
@@ -351,6 +384,8 @@ void setup() {
 
   selected = loadLastChoice();
   bootStarted = millis();
+  Serial.printf("[LAUNCHER] rsDeck launcher up, last choice: %s\n",
+                selected == Choice::RNode ? "RNode" : "Standalone");
   drawScreen();
 }
 
@@ -366,6 +401,7 @@ void loop() {
   }
 
   pollTrackball();
+  pollTouch();
   drawCountdown();
 
   if (autoBootEnabled && millis() - bootStarted >= kAutoBootMs) {
@@ -373,5 +409,5 @@ void loop() {
     return;
   }
 
-  delay(10);
+  delay(5);
 }
