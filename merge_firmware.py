@@ -20,7 +20,7 @@ def merge_bin(source, target, env):
     python = env.subst("$PYTHONEXE")
     env.Execute(
         f"{shlex.quote(python)} -m esptool --chip esp32s3 merge-bin "
-        "--flash-mode qio --flash-size 16MB "
+        "--flash-mode dio --flash-size 16MB "
         f"-o {shlex.quote(output)} "
         f"0x0000 {shlex.quote(os.path.join(build_dir, 'bootloader.bin'))} "
         f"0x8000 {shlex.quote(os.path.join(build_dir, 'partitions.bin'))} "

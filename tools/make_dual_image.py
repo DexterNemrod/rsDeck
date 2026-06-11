@@ -68,7 +68,7 @@ def main() -> int:
         "esp32s3",
         "merge-bin",
         "--flash-mode",
-        "qio",
+        "dio",
         "--flash-size",
         "16MB",
         "--output",

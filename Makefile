@@ -79,7 +79,7 @@ standalone-image: build-standalone
 rnode-only-image: build-rnode
 	mkdir -p $(BUILD_DIR)
 	python3 -m esptool --chip esp32s3 merge-bin \
-		--flash-mode qio --flash-size 16MB \
+		--flash-mode dio --flash-size 16MB \
 		--output $(RNODE_ONLY_BIN) \
 		0x0000 $(RNODE_BOOTLOADER_BIN) \
 		0x8000 $(RNODE_PARTITIONS_BIN) \

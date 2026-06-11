@@ -23,7 +23,7 @@ def main() -> int:
     manifest = {
         "chipFamily": "ESP32-S3",
         "flashSize": "16MB",
-        "flashMode": "qio",
+        "flashMode": "dio",
         "flashFreq": "80m",
         "parts": [
             {"path": image_name, "offset": "0x0000"},
