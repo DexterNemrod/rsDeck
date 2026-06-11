@@ -11,6 +11,7 @@
 
 #include "config/BoardConfig.h"
 #include "config/Config.h"
+#include "platform/RsDeckModeSwitch.h"
 #include "hal/Display.h"
 #include "hal/TouchInput.h"
 #include "hal/Trackball.h"
@@ -1073,6 +1074,12 @@ void setup() {
     Serial.printf("[BOOT] Reset: %s (%d)\n", reasonStr, (int)reason);
     Serial.printf("[BOOT] Heap: %lu  PSRAM: %lu\n",
                   (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getPsramSize());
+
+    // Dual-boot layout: re-arm the launcher so the next reset shows the chooser.
+    auto launcherBoot = rs_deck::returnToLauncherNextBoot();
+    if (!launcherBoot.ok) {
+        Serial.printf("[BOOT] Launcher return unavailable: %s\n", launcherBoot.message);
+    }
     if (!psramFound() || heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) < 1024 * 1024) {
         Serial.printf("[BOOT] FATAL: PSRAM unavailable or too fragmented (largest=%lu)\n",
                       (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
