@@ -482,8 +482,9 @@ void LvSettingsScreen::buildItems() {
                     if (!entry.isDirectory()) {
                         String name = entry.name();
                         name.toLowerCase();
-                        bool legacyIdentityKey = name == "identity.key" || name.endsWith("/identity.key");
-                        if (name.endsWith(".identity") || (name.endsWith(".key") && !legacyIdentityKey)) {
+                        bool reservedIdentityFile = name == "identity.key" || name.endsWith("/identity.key") ||
+                            name == "identity.identity" || name.endsWith("/identity.identity");
+                        if (!reservedIdentityFile && (name.endsWith(".identity") || name.endsWith(".key"))) {
                             identityFiles++;
                         }
                     }

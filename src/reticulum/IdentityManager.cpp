@@ -84,8 +84,10 @@ String IdentityManager::importIdentityPath() const {
         entry.close();
         String lower = name;
         lower.toLowerCase();
-        bool legacyIdentityKey = lower == "identity.key" || lower.endsWith("/identity.key");
-        bool importCandidate = lower.endsWith(".identity") || (lower.endsWith(".key") && !legacyIdentityKey);
+        bool reservedIdentityFile = lower == "identity.key" || lower.endsWith("/identity.key") ||
+            lower == "identity.identity" || lower.endsWith("/identity.identity");
+        bool importCandidate = !reservedIdentityFile &&
+            (lower.endsWith(".identity") || lower.endsWith(".key"));
         if (importCandidate) {
             candidate = name.startsWith("/") ? name : String(SD_PATH_IDENTITY_DIR) + "/" + name;
             candidates++;
