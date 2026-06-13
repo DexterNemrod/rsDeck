@@ -56,6 +56,7 @@ private:
     void loadSlotMeta();
     void saveSlotMeta();
     String slotKeyPath(int slotNum) const;
+    String importIdentityPath() const;
 
     FlashStore* _flash = nullptr;
     SDStore* _sd = nullptr;

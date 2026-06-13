@@ -49,7 +49,9 @@
 #define SD_PATH_USER_CONFIG  "/ratdeck/config/user.json"
 #define SD_PATH_MESSAGES     "/ratdeck/messages"
 #define SD_PATH_CONTACTS     "/ratdeck/contacts"
+#define SD_PATH_IDENTITY_DIR "/ratdeck/identity"
 #define SD_PATH_IDENTITY     "/ratdeck/identity/identity.key"
+#define SD_PATH_IMPORT_IDENTITY "/ratdeck/identity/import.identity"
 #define SD_PATH_IMPORT_ID    "/ratdeck/identity/import.key"
 
 // --- TCP Client ---

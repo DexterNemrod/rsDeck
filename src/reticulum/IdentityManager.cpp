@@ -64,14 +64,52 @@ String IdentityManager::slotKeyPath(int slotNum) const {
     return String(path);
 }
 
+String IdentityManager::importIdentityPath() const {
+    if (!_sd || !_sd->isReady()) return "";
+    if (_sd->exists(SD_PATH_IMPORT_IDENTITY)) return String(SD_PATH_IMPORT_IDENTITY);
+    if (_sd->exists(SD_PATH_IMPORT_ID)) return String(SD_PATH_IMPORT_ID);
+
+    File dir = _sd->openDir(SD_PATH_IDENTITY_DIR);
+    if (!dir) return "";
+    String candidate;
+    int candidates = 0;
+    while (true) {
+        File entry = dir.openNextFile();
+        if (!entry) break;
+        if (entry.isDirectory()) {
+            entry.close();
+            continue;
+        }
+        String name = entry.name();
+        entry.close();
+        String lower = name;
+        lower.toLowerCase();
+        bool legacyIdentityKey = lower == "identity.key" || lower.endsWith("/identity.key");
+        bool importCandidate = lower.endsWith(".identity") || (lower.endsWith(".key") && !legacyIdentityKey);
+        if (importCandidate) {
+            candidate = name.startsWith("/") ? name : String(SD_PATH_IDENTITY_DIR) + "/" + name;
+            candidates++;
+        }
+    }
+    if (candidates == 1) return candidate;
+    if (candidates > 1) Serial.println("[IDMGR] Multiple import identity files found on SD");
+    return "";
+}
+
 int IdentityManager::importIdentity(const String& displayName) {
     (void)displayName;
     if (!_sd || !_sd->isReady()) return -1;
     if ((int)_slots.size() >= MAX_IDENTITIES) return -1;
 
+    String importPath = importIdentityPath();
+    if (importPath.isEmpty()) {
+        Serial.println("[IDMGR] No import identity file found on SD");
+        return -1;
+    }
+
     uint8_t buffer[64];
     size_t bytesRead = 0;
-    if (!_sd->readFile(SD_PATH_IMPORT_ID, buffer, sizeof(buffer), bytesRead) || bytesRead != sizeof(buffer)) {
+    if (!_sd->readFile(importPath.c_str(), buffer, sizeof(buffer), bytesRead) || bytesRead != sizeof(buffer)) {
         Serial.println("[IDMGR] Failed to read 64-byte import identity from SD");
         return -1;
     }
@@ -98,7 +136,8 @@ int IdentityManager::importIdentity(const String& displayName) {
     _slots.push_back(slot);
 
     saveSlotMeta();
-    Serial.printf("[IDMGR] Imported identity %d: %s\n", slotNum, slot.hash.substr(0, 16).c_str());
+    Serial.printf("[IDMGR] Imported identity %d from %s: %s\n",
+                  slotNum, importPath.c_str(), slot.hash.substr(0, 16).c_str());
     return slotNum;
 }
 

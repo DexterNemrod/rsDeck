@@ -473,9 +473,30 @@ void LvSettingsScreen::buildItems() {
                 if (_ui) _ui->lvStatusBar().showToast("No SD card", 1200);
                 return;
             }
-            if (!_sd->exists(SD_PATH_IMPORT_ID)) {
-                if (_ui) _ui->lvStatusBar().showToast("Missing import.key", 1200);
-                return;
+            if (!_sd->exists(SD_PATH_IMPORT_IDENTITY) && !_sd->exists(SD_PATH_IMPORT_ID)) {
+                File dir = _sd->openDir(SD_PATH_IDENTITY_DIR);
+                int identityFiles = 0;
+                while (dir) {
+                    File entry = dir.openNextFile();
+                    if (!entry) break;
+                    if (!entry.isDirectory()) {
+                        String name = entry.name();
+                        name.toLowerCase();
+                        bool legacyIdentityKey = name == "identity.key" || name.endsWith("/identity.key");
+                        if (name.endsWith(".identity") || (name.endsWith(".key") && !legacyIdentityKey)) {
+                            identityFiles++;
+                        }
+                    }
+                    entry.close();
+                }
+                if (identityFiles == 0) {
+                    if (_ui) _ui->lvStatusBar().showToast("Missing identity file", 1200);
+                    return;
+                }
+                if (identityFiles > 1) {
+                    if (_ui) _ui->lvStatusBar().showToast("Rename one import.identity", 1500);
+                    return;
+                }
             }
             if (!_idMgr) {
                 if (_ui) _ui->lvStatusBar().showToast("Not available", 1200);
