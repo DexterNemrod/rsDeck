@@ -2112,7 +2112,18 @@ void LvSettingsScreen::applyAndSave() {
         _power->setKbAutoOn(s.keyboardAutoOn);
         _power->setKbAutoOff(s.keyboardAutoOff);
     }
-    if (_radio && _radio->isRadioOnline()) {
+    // Detect TCP server change before saving
+    bool tcpChanged = tcpSettingsChanged();
+
+    // Save settings FIRST before applying to hardware
+    // This prevents race conditions where radio is configured but settings not saved
+    bool saved = false;
+    if (_saveCallback) { saved = _saveCallback(); }
+    else if (_sd && _flash) { saved = _cfg->save(*_sd, *_flash); }
+    else if (_flash) { saved = _cfg->save(*_flash); }
+
+    // Only apply radio settings if save succeeded
+    if (saved && _radio && _radio->isRadioOnline()) {
         if (s.loraEnabled) {
             _radio->setFrequency(s.loraFrequency);
             _radio->setTxPower(s.loraTxPower);
@@ -2129,14 +2140,6 @@ void LvSettingsScreen::applyAndSave() {
         _audio->setEnabled(s.audioEnabled);
         _audio->setVolume(s.audioVolume);
     }
-
-    // Detect TCP server change before saving
-    bool tcpChanged = tcpSettingsChanged();
-
-    bool saved = false;
-    if (_saveCallback) { saved = _saveCallback(); }
-    else if (_sd && _flash) { saved = _cfg->save(*_sd, *_flash); }
-    else if (_flash) { saved = _cfg->save(*_flash); }
 
     // TCP relay changes are persisted only. Recreating clients live can race
     // in-flight sockets/netif teardown on ESP32; reboot applies them cleanly.

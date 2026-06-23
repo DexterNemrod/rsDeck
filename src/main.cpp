@@ -157,14 +157,41 @@ static void applyRadioSettingsToHardware(const UserSettings& s, const char* cont
         return;
     }
 
-    radio.setFrequency(s.loraFrequency);
-    radio.setSpreadingFactor(s.loraSF);
-    radio.setSignalBandwidth(s.loraBW);
-    radio.setCodingRate4(s.loraCR);
-    radio.setTxPower(s.loraTxPower);
-    radio.setPreambleLength(s.loraPreamble);
+    // Check if settings have actually changed to avoid unnecessary mode transitions
+    // This prevents taking the radio out of RX mode when Reticulum is actively receiving
+    bool freqChanged = radio.getFrequency() != s.loraFrequency;
+    bool sfChanged = radio.getSpreadingFactor() != s.loraSF;
+    bool bwChanged = radio.getSignalBandwidth() != s.loraBW;
+    bool crChanged = radio.getCodingRate4() != s.loraCR;
+    bool powerChanged = radio.getTxPower() != s.loraTxPower;
+    bool preambleChanged = radio.getPreambleLength() != s.loraPreamble;
+
+    if (!freqChanged && !sfChanged && !bwChanged && !crChanged && 
+        !powerChanged && !preambleChanged) {
+        // Settings haven't changed, just ensure we're in receive mode
+        if (!radio.ensureLoRaMode(context)) {
+            Serial.printf("[%s] Failed to ensure LoRa mode!\n", context);
+        }
+        radio.receive();
+        return;
+    }
+
+    // Explicitly ensure LoRa mode before changing settings
+    if (!radio.ensureLoRaMode(context)) {
+        Serial.printf("[%s] Failed to ensure LoRa mode!\n", context);
+        return;
+    }
+
+    // Apply changes only if needed
+    if (freqChanged) radio.setFrequency(s.loraFrequency);
+    if (sfChanged) radio.setSpreadingFactor(s.loraSF);
+    if (bwChanged) radio.setSignalBandwidth(s.loraBW);
+    if (crChanged) radio.setCodingRate4(s.loraCR);
+    if (powerChanged) radio.setTxPower(s.loraTxPower);
+    if (preambleChanged) radio.setPreambleLength(s.loraPreamble);
+
     radio.receive();
-    Serial.printf("[%s] Radio: %lu Hz, SF%d, BW%lu, CR4/%d, %d dBm, pre=%ld\n",
+    Serial.printf("[%s] Radio configured: %lu Hz, SF%d, BW%lu, CR4/%d, %d dBm, pre=%ld\n",
                   context,
                   (unsigned long)s.loraFrequency, s.loraSF,
                   (unsigned long)s.loraBW, s.loraCR, s.loraTxPower,
@@ -1109,8 +1136,7 @@ void setup() {
     pinMode(LORA_CS, OUTPUT); digitalWrite(LORA_CS, HIGH);
     pinMode(SD_CS, OUTPUT);   digitalWrite(SD_CS, HIGH);
 
-    // Mount flash before radio bring-up so persisted RF settings are used from
-    // the first SX1262 init, instead of always booting at the US default first.
+    // Mount flash for early config (theme selection) and full config load
     Serial.println("[BOOT] Mounting flash for early config...");
     if (flash.begin()) {
         flashMounted = true;
@@ -1120,6 +1146,16 @@ void setup() {
     }
     // Select palette before any LVGL styles are built
     Theme::setScheme(userConfig.settings().themeLight ? Theme::Scheme::LIGHT : Theme::Scheme::DARK);
+
+    // Load full configuration (SD + flash) BEFORE radio init
+    // This ensures radio is initialized with final settings, not early flash-only settings
+    Serial.println("[BOOT] Loading full configuration...");
+    userConfig.load(sdStore, flash);
+    // Re-sync palette in case SD config had different theme
+    {
+        Theme::Scheme want = userConfig.settings().themeLight ? Theme::Scheme::LIGHT : Theme::Scheme::DARK;
+        if (want != Theme::scheme()) { Theme::setScheme(want); }
+    }
 
     // Step 4: Radio + SD init BEFORE display
     // Radio and SD must init while SPIClass exclusively owns SPI2_HOST.
@@ -1351,9 +1387,13 @@ void setup() {
     lvBootScreen.setProgress(0.83f, "Config loaded");
     // (LVGL boot renders via lv_timer_handler in setProgress)
 
-    // Step 21: Apply radio config
+    // Step 21: Update LoRa online status (radio already configured at step 4 and 12)
+    // NOTE: We do NOT call applyRadioSettingsToHardware() here because:
+    // 1. Radio was already configured at line 1131 with early flash settings
+    // 2. Radio was reconfigured at line 1273 with full settings after SD/flash load
+    // 3. Reticulum started at line 1278 and LoRaInterface is now actively receiving
+    //    - Reconfiguring here would take radio out of RX mode and cause packet loss
     if (radioOnline && userConfig.settings().loraEnabled) {
-        applyRadioSettingsToHardware(userConfig.settings(), "BOOT");
         ui.lvStatusBar().setLoRaOnline(true);
     } else if (radioOnline) {
         radio.sleep();
